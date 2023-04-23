@@ -10,7 +10,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
@@ -33,7 +32,6 @@ func static(revision string) {
 	}
 
 	podName := revision + "-" + randSeq(9) + "-" + randSeq(5)
-	servicePort := int32(80)
 	imageName := revision
 
 	namespace := "static"
@@ -68,33 +66,6 @@ func static(revision string) {
 	duration := endTime.Sub(startTime)
 
 	fmt.Printf("Static pod created with name %s in %v\n", pod.GetName(), duration)
-
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app": "nginx",
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       servicePort,
-					TargetPort: intstr.FromInt(80),
-				},
-			},
-		},
-	}
-
-	_, err = clientset.CoreV1().Services(namespace).Create(context.TODO(), service, metav1.CreateOptions{})
-	if err != nil {
-		panic(err)
-	}
-
-	duration = time.Now().Sub(startTime)
-	fmt.Printf("%s created with name %v\n", revision, duration)
 }
 
 func randSeq(n int) string {
