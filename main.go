@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math/rand"
-	"os"
+	"net/http"
 	"time"
 
 	"path/filepath"
@@ -20,10 +20,10 @@ import (
 const podManifestDir = "/etc/kubernetes/manifests"
 
 func main() {
-	static("nginx")
+	static("helloworld", "crccheck/hello-world", "latest", "50051")
 }
 
-func static(revision string) {
+func static(name string, image string, version string, port string) {
 	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -35,62 +35,9 @@ func static(revision string) {
 		panic(err)
 	}
 
-	podName := revision + "-" + randSeq(9) + "-" + randSeq(5)
-	// podName := revision
-	imageName := revision
-
-	namespace := "static"
-	// Create the new namespace
-	_, _ = clientset.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespace,
-		},
-	}, metav1.CreateOptions{})
-
+	podName := name + "-" + randSeq(9) + "-" + randSeq(5)
 	startTime := time.Now()
-	// pod := &corev1.Pod{
-	// 	ObjectMeta: metav1.ObjectMeta{
-	// 		Name:      podName,
-	// 		Namespace: namespace,
-	// 	},
-	// 	Spec: corev1.PodSpec{
-	// 		Containers: []corev1.Container{
-	// 			{
-	// 				Name:  revision,
-	// 				Image: imageName,
-	// 				Ports: []corev1.ContainerPort{
-	// 					{
-	// 						Name:          "http",
-	// 						ContainerPort: 8080,
-	// 						Protocol:      corev1.ProtocolTCP,
-	// 					},
-	// 				},
-	// 			},
-	// 		},
-	// 	},
-	// }
-
-	// // Serialize the pod to YAML
-	// podYaml, err := serializeObject(pod)
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-
-	// // Write the pod YAML to a file
-	// err = ioutil.WriteFile("my-static-pod.yaml", []byte(podYaml), 0644)
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-
-	// pod, err = clientset.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	imageTag := "latest"
-
-	podManifest := fmt.Sprintf(`
-apiVersion: v1
+	podManifest := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
   name: %s
@@ -98,26 +45,24 @@ spec:
   containers:
   - name: %s
     image: %s:%s
-`, podName, imageName, imageName, imageTag)
+    imagePullPolicy: IfNotPresent
+    ports:
+      - name: h2c
+        containerPort: %s
+`, podName, name, image, version, port)
 
 	podManifestPath := filepath.Join(podManifestDir, podName+".yaml")
 
 	err = ioutil.WriteFile(podManifestPath, []byte(podManifest), 0644)
 	if err != nil {
 		fmt.Printf("Failed to write pod manifest file: %v\n", err)
-		os.Exit(1)
+		panic(err)
 	}
 
 	fmt.Printf("Created pod manifest file at %s\n", podManifestPath)
 
-	// podName = podName + "-node-0.anshal-155406.ntu-cloud-pg0.utah.cloudlab.us"
-	// pod, err := clientset.CoreV1().Pods("default").Get(context.Background(), podName, metav1.GetOptions{})
-	// if err != nil {
-	// 	panic(err.Error())
-	// }
-
 	// Wait until pod is ready
-	podName = podName + "-node-0.anshal-155406.ntu-cloud-pg0.utah.cloudlab.us"
+	podName = podName + "-node-0.anshal-155872.ntu-cloud-pg0.cloudlab.umass.edu"
 	waitForPodReady(clientset, podName)
 
 	endTime := time.Now()
@@ -125,24 +70,24 @@ spec:
 
 	fmt.Printf("Static pod created with name %s in %v\n", podName, duration)
 
-	// podIP, err := getPodIP(clientset, namespace, podName)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	podIP, err := getPodIP(clientset, "default", podName)
+	if err != nil {
+		panic(err)
+	}
 
-	// // Invoke function on pod IP and port
-	// resp, err := http.Get(fmt.Sprintf("http://%s:%d", podIP, 8080))
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// defer resp.Body.Close()
+	// Invoke function on pod IP and port
+	resp, err := http.Get(fmt.Sprintf("http://%s:%d", podIP, 8000))
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
 
-	// body, err := ioutil.ReadAll(resp.Body)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
 
-	// fmt.Printf("Function response%s\n", string(body))
+	fmt.Printf("Function response%s\n", string(body))
 }
 
 func randSeq(n int) string {
@@ -181,10 +126,3 @@ func getPodIP(clientset *kubernetes.Clientset, namespace string, name string) (s
 	}
 	return pod.Status.PodIP, nil
 }
-
-// func serializeObject(obj interface{}) (string, error) {
-// 	serializer := json.NewSerializerWithOptions(json.DefaultMetaFactory, nil, nil, json.SerializerOptions{Yaml: true, Pretty: true})
-// 	result := ""
-// 	err := serializer.Encode(obj, &result)
-// 	return result, err
-// }
