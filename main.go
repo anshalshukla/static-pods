@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"path/filepath"
@@ -20,10 +22,6 @@ import (
 const podManifestDir = "/etc/kubernetes/manifests"
 
 func main() {
-	static("helloworld", "crccheck/hello-world", "latest", "50051")
-}
-
-func static(name string, image string, version string, port string) {
 	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -35,6 +33,30 @@ func static(name string, image string, version string, port string) {
 		panic(err)
 	}
 
+	createStaticPod(clientset, "helloworld", "crccheck/hello-world", "latest", "50051")
+	deleteStaticPod("helloworld")
+}
+
+func deleteStaticPod(name string) error {
+	files := []string{}
+	err := filepath.Walk(podManifestDir, func(path string, info os.FileInfo, err error) error {
+		if !info.IsDir() && strings.HasPrefix(info.Name(), name) {
+			files = append(files, info.Name())
+		}
+		return nil
+	})
+
+	for _, file := range files {
+		err = os.Remove(filepath.Join(podManifestDir, file))
+		if err != nil {
+			fmt.Println("Error deleting file:", err)
+			return err
+		}
+	}
+	return nil
+}
+
+func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string) (string, error) {
 	podName := name + "-" + randSeq(9) + "-" + randSeq(5)
 	startTime := time.Now()
 	podManifest := fmt.Sprintf(`apiVersion: v1
@@ -53,17 +75,22 @@ spec:
 
 	podManifestPath := filepath.Join(podManifestDir, podName+".yaml")
 
-	err = ioutil.WriteFile(podManifestPath, []byte(podManifest), 0644)
+	err := ioutil.WriteFile(podManifestPath, []byte(podManifest), 0644)
 	if err != nil {
 		fmt.Printf("Failed to write pod manifest file: %v\n", err)
-		panic(err)
+		return "", err
 	}
 
 	fmt.Printf("Created pod manifest file at %s\n", podManifestPath)
 
 	// Wait until pod is ready
-	podName = podName + "-node-0.anshal-155872.ntu-cloud-pg0.cloudlab.umass.edu"
-	waitForPodReady(clientset, podName)
+	host, err := os.Hostname()
+	if err != nil {
+		fmt.Println("Unable to get hostname: %v\n", err)
+		return "", err
+	}
+	podName = podName + "-" + host
+	waitForPodReady(clientset, "default", podName)
 
 	endTime := time.Now()
 	duration := endTime.Sub(startTime)
@@ -72,22 +99,24 @@ spec:
 
 	podIP, err := getPodIP(clientset, "default", podName)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	// Invoke function on pod IP and port
 	resp, err := http.Get(fmt.Sprintf("http://%s:%d", podIP, 8000))
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	fmt.Printf("Function response%s\n", string(body))
+
+	return podName, nil
 }
 
 func randSeq(n int) string {
@@ -100,15 +129,11 @@ func randSeq(n int) string {
 	return string(b)
 }
 
-func waitForPodReady(clientset *kubernetes.Clientset, podName string) {
+func waitForPodReady(clientset *kubernetes.Clientset, namespace string, podName string) {
 	for {
-		pod, err := clientset.CoreV1().Pods("default").Get(context.Background(), podName, metav1.GetOptions{})
+		pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 		if err != nil {
 			continue
-		}
-		pod, err = clientset.CoreV1().Pods(pod.Namespace).Get(context.Background(), pod.Name, metav1.GetOptions{})
-		if err != nil {
-			panic(err)
 		}
 
 		if pod.Status.Phase == corev1.PodRunning {
@@ -119,8 +144,8 @@ func waitForPodReady(clientset *kubernetes.Clientset, podName string) {
 	}
 }
 
-func getPodIP(clientset *kubernetes.Clientset, namespace string, name string) (string, error) {
-	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), name, metav1.GetOptions{})
+func getPodIP(clientset *kubernetes.Clientset, namespace string, podName string) (string, error) {
+	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
