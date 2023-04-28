@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"path/filepath"
@@ -33,11 +34,38 @@ func main() {
 		panic(err)
 	}
 
-	createStaticPod(clientset, "helloworld", "crccheck/hello-world", "latest", "50051")
-	deleteStaticPod("helloworld")
+	f, err := scaleUp(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
+	fmt.Printf("%v\n", f)
+	scaleDown("helloworld")
 }
 
-func deleteStaticPod(name string) error {
+func scaleUp(clientset *kubernetes.Clientset, name string, image string, version string, port string, revisions int) ([]string, error) {
+	var podNames []string
+	var errors error
+	var wg sync.WaitGroup
+	for i := 0; i < revisions; i++ {
+		wg.Add(1)
+		go func() {
+			podName, err := createStaticPod(clientset, name, image, version, port)
+			if err != nil {
+				errors = err
+			}
+			podNames = append(podNames, podName)
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+	if errors != nil {
+		err := scaleDown(name)
+		if err != nil {
+			fmt.Println("Error deleting partially scaled up %s function pods: %v\n", name, err)
+			return nil, err
+		}
+	}
+	return podNames, errors
+}
+
+func scaleDown(name string) error {
 	files := []string{}
 	err := filepath.Walk(podManifestDir, func(path string, info os.FileInfo, err error) error {
 		if !info.IsDir() && strings.HasPrefix(info.Name(), name) {
@@ -56,7 +84,7 @@ func deleteStaticPod(name string) error {
 	return nil
 }
 
-func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string) (string, error) {
+func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string, i int) (string, error) {
 	podName := name + "-" + randSeq(9) + "-" + randSeq(5)
 	startTime := time.Now()
 	podManifest := fmt.Sprintf(`apiVersion: v1
@@ -69,8 +97,7 @@ spec:
     image: %s:%s
     imagePullPolicy: IfNotPresent
     ports:
-      - name: h2c
-        containerPort: %s
+      - containerPort: %s
 `, podName, name, image, version, port)
 
 	podManifestPath := filepath.Join(podManifestDir, podName+".yaml")
@@ -93,30 +120,34 @@ spec:
 	waitForPodReady(clientset, "default", podName)
 
 	endTime := time.Now()
+	fmt.Println(startTime)
 	duration := endTime.Sub(startTime)
 
 	fmt.Printf("Static pod created with name %s in %v\n", podName, duration)
 
+	return podName, nil
+}
+
+func invokeFunc(clientset *kubernetes.Clientset, namespace string, podName string) (*http.Response, error) {
 	podIP, err := getPodIP(clientset, "default", podName)
 	if err != nil {
-		return "", err
+		return &http.Response{}, err
 	}
 
 	// Invoke function on pod IP and port
 	resp, err := http.Get(fmt.Sprintf("http://%s:%d", podIP, 8000))
 	if err != nil {
-		return "", err
+		return &http.Response{}, err
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return &http.Response{}, err
 	}
 
 	fmt.Printf("Function response%s\n", string(body))
-
-	return podName, nil
+	return resp, nil
 }
 
 func randSeq(n int) string {
