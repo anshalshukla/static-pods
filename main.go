@@ -34,38 +34,46 @@ func main() {
 		panic(err)
 	}
 
-	f, err := scaleUp(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
-	fmt.Printf("%v\n", f)
+	scale(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
+	// createStaticPod(clientset, "helloworld", "crccheck/hello-world", "latest", "50051")
+	// fmt.Printf("%v\n", f)
 	// scaleDown("helloworld")
 }
 
+func scale(clientset *kubernetes.Clientset, name string, image string, version string, port string, revisions int) {
+	for i := 0; i < revisions; i++ {
+		createStaticPod(clientset, name, image, version, port)
+	}
+}
+
 func scaleUp(clientset *kubernetes.Clientset, name string, image string, version string, port string, revisions int) ([]string, error) {
+
 	var podNames []string
-	var errors error
+	var e error
 	var wg sync.WaitGroup
 	for i := 0; i < revisions; i++ {
 		wg.Add(1)
 		go func() {
 			podName, err := createStaticPod(clientset, name, image, version, port)
 			if err != nil {
-				errors = err
+				e = err
 			}
 			podNames = append(podNames, podName)
 			wg.Done()
 		}()
 	}
 	wg.Wait()
-	if errors != nil {
+	if e != nil {
 		err := scaleDown(name)
 		if err != nil {
-			fmt.Println("Error deleting partially scaled up %s function pods: %v\n", name, err)
-			return nil, err
+			return nil, fmt.Errorf("error deleting partially scaled up %s function pods: %v", name, err)
 		}
 	}
-	return podNames, errors
+	return podNames, e
 }
 
 func scaleDown(name string) error {
+
 	files := []string{}
 	err := filepath.Walk(podManifestDir, func(path string, info os.FileInfo, err error) error {
 		if !info.IsDir() && strings.HasPrefix(info.Name(), name) {
@@ -77,16 +85,21 @@ func scaleDown(name string) error {
 	for _, file := range files {
 		err = os.Remove(filepath.Join(podManifestDir, file))
 		if err != nil {
-			fmt.Println("Error deleting file:", err)
-			return err
+			return fmt.Errorf("error deleting file: %v", err)
 		}
 	}
 	return nil
 }
 
 func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string) (string, error) {
-	podName := name + "-" + randSeq(9) + "-" + randSeq(5)
-	startTime := time.Now()
+
+	pod := name + "-" + randSeq(9) + "-" + randSeq(5)
+	host, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("Unable to get hostname: %v", err)
+	}
+	podName := pod + "-" + host
+
 	podManifest := fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
@@ -98,25 +111,17 @@ spec:
     imagePullPolicy: IfNotPresent
     ports:
       - containerPort: %s
-`, podName, name, image, version, port)
+`, pod, name, image, version, port)
 
-	podManifestPath := filepath.Join(podManifestDir, podName+".yaml")
+	podManifestPath := filepath.Join(podManifestDir, pod+".yaml")
 
-	err := ioutil.WriteFile(podManifestPath, []byte(podManifest), 0644)
+	startTime := time.Now()
+	err = ioutil.WriteFile(podManifestPath, []byte(podManifest), 0644)
 	if err != nil {
-		fmt.Printf("Failed to write pod manifest file: %v\n", err)
-		return "", err
+		return "", fmt.Errorf("failed to write pod manifest file: %v\n", err)
 	}
-
-	fmt.Printf("Created pod manifest file at %s\n", podManifestPath)
 
 	// Wait until pod is ready
-	host, err := os.Hostname()
-	if err != nil {
-		fmt.Println("Unable to get hostname: %v\n", err)
-		return "", err
-	}
-	podName = podName + "-" + host
 	waitForPodReady(clientset, "default", podName)
 
 	endTime := time.Now()
@@ -128,6 +133,7 @@ spec:
 }
 
 func invokeFunc(clientset *kubernetes.Clientset, namespace string, podName string) (*http.Response, error) {
+
 	podIP, err := getPodIP(clientset, "default", podName)
 	if err != nil {
 		return &http.Response{}, err
@@ -150,6 +156,7 @@ func invokeFunc(clientset *kubernetes.Clientset, namespace string, podName strin
 }
 
 func randSeq(n int) string {
+
 	rand.Seed(time.Now().UnixNano())
 	letters := []rune("abcdefghijklmnopqrstuvwxyz0123456789")
 	b := make([]rune, n)
@@ -160,6 +167,7 @@ func randSeq(n int) string {
 }
 
 func waitForPodReady(clientset *kubernetes.Clientset, namespace string, podName string) {
+
 	for {
 		pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 		if err != nil {
@@ -175,9 +183,10 @@ func waitForPodReady(clientset *kubernetes.Clientset, namespace string, podName 
 }
 
 func getPodIP(clientset *kubernetes.Clientset, namespace string, podName string) (string, error) {
+
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), podName, metav1.GetOptions{})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("unable to get pod IP: %v", err)
 	}
 	return pod.Status.PodIP, nil
 }
