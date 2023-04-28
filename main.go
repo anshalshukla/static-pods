@@ -120,7 +120,6 @@ spec:
 	waitForPodReady(clientset, "default", podName)
 
 	endTime := time.Now()
-	fmt.Println(startTime)
 	duration := endTime.Sub(startTime)
 
 	fmt.Printf("Static pod created with name %s in %v\n", podName, duration)
