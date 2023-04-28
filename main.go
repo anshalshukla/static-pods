@@ -36,7 +36,7 @@ func main() {
 
 	f, err := scaleUp(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
 	fmt.Printf("%v\n", f)
-	scaleDown("helloworld")
+	// scaleDown("helloworld")
 }
 
 func scaleUp(clientset *kubernetes.Clientset, name string, image string, version string, port string, revisions int) ([]string, error) {
@@ -84,7 +84,7 @@ func scaleDown(name string) error {
 	return nil
 }
 
-func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string, i int) (string, error) {
+func createStaticPod(clientset *kubernetes.Clientset, name string, image string, version string, port string) (string, error) {
 	podName := name + "-" + randSeq(9) + "-" + randSeq(5)
 	startTime := time.Now()
 	podManifest := fmt.Sprintf(`apiVersion: v1
