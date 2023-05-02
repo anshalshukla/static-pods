@@ -39,11 +39,10 @@ func main() {
 	}
 
 	// Scale the deployment up by creating multiple pods
-	scale(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
+	scaleUp(clientset, "helloworld", "crccheck/hello-world", "latest", "50051", 5)
 
 	// Other functions that can be called
 	// createStaticPod(clientset, "helloworld", "crccheck/hello-world", "latest", "50051")
-	// fmt.Printf("%v\n", f)
 	// scaleDown("helloworld")
 }
 
